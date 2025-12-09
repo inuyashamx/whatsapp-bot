@@ -9,7 +9,7 @@ import { ErrorCodes, type ErrorCode } from '../types/api.js';
  * Base application error class
  */
 export class AppError extends Error {
-  public readonly code: ErrorCode;
+  public code: ErrorCode;
   public readonly statusCode: number;
   public readonly isOperational: boolean;
   public readonly details?: Record<string, unknown>;

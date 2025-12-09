@@ -2,15 +2,15 @@
  * API request/response types
  */
 
-import type { Request, Response, NextFunction } from 'express';
+import type { Request, Response, NextFunction, ParamsDictionary } from 'express-serve-static-core';
+import type { ParsedQs } from 'qs';
 
 // Express extended types
-export interface TypedRequest<TBody = unknown, TParams = unknown, TQuery = unknown>
-  extends Request {
-  body: TBody;
-  params: TParams;
-  query: TQuery;
-}
+export interface TypedRequest<
+  TBody = unknown,
+  TParams extends ParamsDictionary = ParamsDictionary,
+  TQuery extends ParsedQs = ParsedQs
+> extends Request<TParams, unknown, TBody, TQuery> {}
 
 export interface TypedResponse<TData = unknown> extends Response {
   json: (body: ApiResponse<TData>) => this;

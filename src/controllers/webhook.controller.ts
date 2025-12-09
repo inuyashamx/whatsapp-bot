@@ -59,6 +59,8 @@ export async function handleWebhook(req: Request, res: Response): Promise<void> 
 async function processMessage(message: ParsedWhatsAppMessage): Promise<void> {
   const startTime = Date.now();
 
+  logger.info({ from: message.from, content: message.content }, 'Processing incoming message');
+
   try {
     // Check for duplicate messages
     const exists = await messageRepository.exists(message.messageId);
@@ -101,7 +103,7 @@ async function processMessage(message: ParsedWhatsAppMessage): Promise<void> {
       message.content,
       history,
       candidate.name,
-      interview?.currentStage
+      interview?.currentStage?.toLowerCase() as InterviewStage | undefined
     );
 
     // Save AI response to memory

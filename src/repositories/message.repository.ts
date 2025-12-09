@@ -54,7 +54,7 @@ export class MessageRepository {
         tokensUsed: data.tokensUsed,
         aiModel: data.aiModel,
         processingTimeMs: data.processingTimeMs,
-        metadata: data.metadata ?? undefined,
+        metadata: data.metadata as object | undefined,
       },
     });
   }

@@ -525,6 +525,42 @@ sudo systemctl status redis-server
 
 ---
 
+## Quick Start (Development with ngrok)
+
+For quick testing without a domain, use ngrok:
+
+```bash
+# Install ngrok
+curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
+echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
+sudo apt update && sudo apt install ngrok
+
+# Configure ngrok (get token from ngrok.com)
+ngrok config add-authtoken YOUR_TOKEN
+
+# Start the bot
+npm run dev
+
+# In another terminal, start ngrok
+ngrok http 3000
+```
+
+Then configure the webhook URL in Meta Developer Console with the ngrok URL:
+`https://YOUR_NGROK_ID.ngrok-free.app/api/v1/webhook`
+
+---
+
+## Changelog
+
+### v1.0.1 - TypeScript Fixes
+- Fixed TypeScript strict mode compatibility issues
+- Relaxed `exactOptionalPropertyTypes` for better type inference
+- Fixed `PaginationOptions` export conflicts in repositories
+- Updated `TypedRequest` interface to properly extend Express Request
+- Fixed readonly property assignments in error classes
+
+---
+
 ## License
 
 MIT

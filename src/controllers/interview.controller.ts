@@ -14,7 +14,7 @@ import { memoryService } from '../services/memory/memory.service.js';
 import { logger } from '../config/logger.js';
 import { NotFoundError, BadRequestError } from '../utils/errors.js';
 import type { ApiResponse } from '../types/api.js';
-import type { Interview } from '@prisma/client';
+import type { InterviewStatus } from '@prisma/client';
 
 /**
  * Get all interviews with pagination
@@ -24,7 +24,7 @@ export async function getInterviews(req: Request, res: Response): Promise<void> 
 
   const { interviews, total } = await interviewRepository.findMany(
     {
-      status: status as string | undefined,
+      status: status as InterviewStatus | undefined,
       candidateId: candidateId as string | undefined,
       positionId: positionId as string | undefined,
     },

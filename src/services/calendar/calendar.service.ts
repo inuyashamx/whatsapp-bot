@@ -119,7 +119,7 @@ export class CalendarService {
       return {
         eventId: createdEvent.id ?? '',
         eventLink: createdEvent.htmlLink ?? '',
-        meetLink,
+        meetLink: meetLink ?? undefined,
         startTime: request.startTime,
         endTime,
         confirmationSent: true,
