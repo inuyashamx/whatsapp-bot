@@ -1,0 +1,275 @@
+// Prisma schema for WhatsApp Interview Bot
+// Documentation: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// CANDIDATE MANAGEMENT
+// ============================================================================
+
+model Candidate {
+  id           String   @id @default(uuid())
+  phoneNumber  String   @unique @map("phone_number")
+  name         String
+  email        String?  @unique
+  resumeUrl    String?  @map("resume_url")
+  linkedinUrl  String?  @map("linkedin_url")
+  notes        String?
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  interviews   Interview[]
+  messages     Message[]
+  googleTokens GoogleToken?
+
+  @@index([phoneNumber])
+  @@index([email])
+  @@map("candidates")
+}
+
+// ============================================================================
+// JOB POSITIONS
+// ============================================================================
+
+model JobPosition {
+  id               String   @id @default(uuid())
+  title            String
+  department       String
+  description      String
+  requirements     String[]
+  responsibilities String[]
+  salaryMin        Int?     @map("salary_min")
+  salaryMax        Int?     @map("salary_max")
+  salaryCurrency   String?  @default("USD") @map("salary_currency")
+  location         String
+  isRemote         Boolean  @default(false) @map("is_remote")
+  isActive         Boolean  @default(true) @map("is_active")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  interviews Interview[]
+
+  @@index([isActive])
+  @@map("job_positions")
+}
+
+// ============================================================================
+// INTERVIEWS
+// ============================================================================
+
+enum InterviewStatus {
+  PENDING
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum InterviewStage {
+  INTRODUCTION
+  EXPERIENCE_REVIEW
+  TECHNICAL_ASSESSMENT
+  BEHAVIORAL_QUESTIONS
+  CANDIDATE_QUESTIONS
+  CLOSING
+}
+
+model Interview {
+  id              String          @id @default(uuid())
+  candidateId     String          @map("candidate_id")
+  positionId      String          @map("position_id")
+  status          InterviewStatus @default(PENDING)
+  currentStage    InterviewStage  @default(INTRODUCTION) @map("current_stage")
+  scheduledAt     DateTime?       @map("scheduled_at")
+  startedAt       DateTime?       @map("started_at")
+  completedAt     DateTime?       @map("completed_at")
+  calendarEventId String?         @map("calendar_event_id")
+  meetingLink     String?         @map("meeting_link")
+  notes           String?
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  // Relations
+  candidate Candidate          @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  position  JobPosition        @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  messages  Message[]
+  responses InterviewResponse[]
+  score     InterviewScore?
+
+  @@index([candidateId])
+  @@index([positionId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@map("interviews")
+}
+
+model InterviewResponse {
+  id          String   @id @default(uuid())
+  interviewId String   @map("interview_id")
+  question    String
+  answer      String
+  score       Float?
+  feedback    String?
+  category    String?
+  timestamp   DateTime @default(now())
+
+  // Relations
+  interview Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+
+  @@index([interviewId])
+  @@map("interview_responses")
+}
+
+model InterviewScore {
+  id              String   @id @default(uuid())
+  interviewId     String   @unique @map("interview_id")
+  overall         Float
+  technicalSkills Float    @map("technical_skills")
+  communication   Float
+  problemSolving  Float    @map("problem_solving")
+  cultureFit      Float    @map("culture_fit")
+  enthusiasm      Float
+  recommendation  String?
+  strengths       String[]
+  improvements    String[] @map("areas_of_improvement")
+  summary         String?
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  // Relations
+  interview Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+
+  @@map("interview_scores")
+}
+
+// ============================================================================
+// MESSAGING
+// ============================================================================
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+model Message {
+  id                  String           @id @default(uuid())
+  candidateId         String           @map("candidate_id")
+  interviewId         String?          @map("interview_id")
+  whatsappMessageId   String?          @unique @map("whatsapp_message_id")
+  role                MessageRole
+  direction           MessageDirection
+  content             String
+  messageType         String           @default("text") @map("message_type")
+  mediaUrl            String?          @map("media_url")
+  status              String           @default("sent")
+  tokensUsed          Int?             @map("tokens_used")
+  aiModel             String?          @map("ai_model")
+  processingTimeMs    Int?             @map("processing_time_ms")
+  metadata            Json?
+  createdAt           DateTime         @default(now()) @map("created_at")
+
+  // Relations
+  candidate Candidate  @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  interview Interview? @relation(fields: [interviewId], references: [id], onDelete: SetNull)
+
+  @@index([candidateId])
+  @@index([interviewId])
+  @@index([whatsappMessageId])
+  @@index([createdAt])
+  @@map("messages")
+}
+
+// ============================================================================
+// GOOGLE OAUTH TOKENS
+// ============================================================================
+
+model GoogleToken {
+  id           String   @id @default(uuid())
+  candidateId  String   @unique @map("candidate_id")
+  accessToken  String   @map("access_token")
+  refreshToken String?  @map("refresh_token")
+  tokenType    String   @default("Bearer") @map("token_type")
+  scope        String
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@map("google_tokens")
+}
+
+// ============================================================================
+// SCHEDULED EVENTS (for email reminders, follow-ups, etc.)
+// ============================================================================
+
+enum ScheduledEventType {
+  INTERVIEW_REMINDER
+  FOLLOW_UP_EMAIL
+  INTERVIEW_CONFIRMATION
+  CUSTOM
+}
+
+enum ScheduledEventStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model ScheduledEvent {
+  id          String               @id @default(uuid())
+  type        ScheduledEventType
+  status      ScheduledEventStatus @default(PENDING)
+  scheduledAt DateTime             @map("scheduled_at")
+  executedAt  DateTime?            @map("executed_at")
+  payload     Json
+  result      Json?
+  error       String?
+  retryCount  Int                  @default(0) @map("retry_count")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+
+  @@index([status, scheduledAt])
+  @@index([type])
+  @@map("scheduled_events")
+}
+
+// ============================================================================
+// AUDIT LOG
+// ============================================================================
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  action     String
+  actor      String?
+  oldValue   Json?    @map("old_value")
+  newValue   Json?    @map("new_value")
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
