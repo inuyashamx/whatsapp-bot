@@ -21,9 +21,27 @@ import type { ChatMessage, AIGenerateResponse, TokenUsage } from '../../types/ai
 import type { InterviewStage } from '../../types/interview.js';
 import {
   getInterviewSystemPrompt,
+  getRecruiterSystemPrompt,
   getSummaryGenerationPrompt,
   type InterviewPromptVariables,
 } from './prompts.js';
+
+// Types for scheduling actions
+export interface ScheduleAction {
+  action: 'schedule_interview';
+  candidateName: string;
+  candidateEmail: string;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:MM
+  positionTitle: string;
+  timezone?: string;
+}
+
+export interface AIRecruiterResponse {
+  content: string;
+  action?: ScheduleAction;
+  tokensUsed: number;
+}
 
 export class AIService {
   private model: BaseChatModel;
@@ -111,6 +129,95 @@ export class AIService {
       };
     } catch (error) {
       logger.error({ error }, 'Failed to generate AI response');
+      throw new AIError(
+        error instanceof Error ? error.message : 'Failed to generate response'
+      );
+    }
+  }
+
+  /**
+   * Generate recruiter response with scheduling detection
+   */
+  async generateRecruiterResponse(
+    userMessage: string,
+    conversationHistory: ChatMessage[],
+    context: {
+      companyName: string;
+      candidateName?: string;
+      candidateEmail?: string;
+      availablePositions?: string[];
+    }
+  ): Promise<AIRecruiterResponse> {
+    const startTime = Date.now();
+
+    try {
+      // Build the recruiter system prompt
+      const systemPrompt = getRecruiterSystemPrompt({
+        companyName: context.companyName,
+        candidateName: context.candidateName,
+        availablePositions: context.availablePositions,
+      });
+
+      // Add scheduling detection instructions
+      const enhancedPrompt = `${systemPrompt}
+
+## IMPORTANT: Action Detection
+After your response, if the conversation has confirmed ALL of the following for scheduling:
+1. Candidate's name
+2. Candidate's email
+3. Interview date (specific date)
+4. Interview time (specific time)
+5. The candidate has CONFIRMED they want to schedule
+
+Then add this JSON block at the END of your message (after a blank line):
+\`\`\`json
+{"action":"schedule_interview","candidateName":"Name","candidateEmail":"email@example.com","date":"YYYY-MM-DD","time":"HH:MM","positionTitle":"Position"}
+\`\`\`
+
+ONLY add this JSON when you have ALL information AND the candidate has confirmed. Otherwise, just respond normally.`;
+
+      // Convert history to LangChain messages
+      const messages: BaseMessage[] = [
+        new SystemMessage(enhancedPrompt),
+        ...this.toBaseMessages(conversationHistory),
+        new HumanMessage(userMessage),
+      ];
+
+      // Generate response
+      const response = await this.model.invoke(messages);
+      let content = await this.outputParser.invoke(response);
+
+      // Check for scheduling action in response
+      let action: ScheduleAction | undefined;
+      const jsonMatch = content.match(/```json\s*(\{[\s\S]*?"action"\s*:\s*"schedule_interview"[\s\S]*?\})\s*```/);
+
+      if (jsonMatch && jsonMatch[1]) {
+        try {
+          action = JSON.parse(jsonMatch[1]) as ScheduleAction;
+          // Remove the JSON block from the response
+          content = content.replace(/\n*```json[\s\S]*?```\n*/g, '').trim();
+        } catch {
+          logger.warn('Failed to parse scheduling action JSON');
+        }
+      }
+
+      // Calculate token usage
+      const usage = this.estimateTokenUsage(enhancedPrompt, conversationHistory, userMessage, content);
+      const processingTime = Date.now() - startTime;
+
+      logger.debug({
+        processingTime,
+        tokens: usage.totalTokens,
+        hasAction: !!action
+      }, 'Recruiter response generated');
+
+      return {
+        content,
+        action,
+        tokensUsed: usage.totalTokens,
+      };
+    } catch (error) {
+      logger.error({ error }, 'Failed to generate recruiter response');
       throw new AIError(
         error instanceof Error ? error.message : 'Failed to generate response'
       );

@@ -5,16 +5,15 @@
 
 import type { Request, Response } from 'express';
 import { whatsAppService } from '../services/whatsapp/whatsapp.service.js';
-import { aiService } from '../services/ai/ai.service.js';
+import { aiService, type ScheduleAction } from '../services/ai/ai.service.js';
 import { memoryService } from '../services/memory/memory.service.js';
+import { calendarService } from '../services/calendar/calendar.service.js';
+import { emailService } from '../services/email/email.service.js';
 import { candidateRepository } from '../repositories/candidate.repository.js';
 import { messageRepository } from '../repositories/message.repository.js';
-import { interviewRepository } from '../repositories/interview.repository.js';
 import { logger } from '../config/logger.js';
 import { config } from '../config/index.js';
 import type { WhatsAppWebhookPayload, ParsedWhatsAppMessage } from '../types/whatsapp.js';
-import type { ChatMessage } from '../types/ai.js';
-import type { InterviewStage } from '../types/interview.js';
 
 /**
  * Handle webhook verification (GET request from Meta)
@@ -85,9 +84,6 @@ async function processMessage(message: ParsedWhatsAppMessage): Promise<void> {
       message.messageId
     );
 
-    // Check for active interview
-    let interview = await interviewRepository.findActiveForCandidate(candidate.id);
-
     // Add message to conversation memory
     await memoryService.addMessage(message.from, {
       role: 'user',
@@ -98,12 +94,16 @@ async function processMessage(message: ParsedWhatsAppMessage): Promise<void> {
     // Get conversation history
     const history = await memoryService.getConversationHistory(message.from);
 
-    // Generate AI response
-    const aiResponse = await generateResponse(
+    // Generate AI recruiter response
+    const aiResponse = await aiService.generateRecruiterResponse(
       message.content,
       history,
-      candidate.name,
-      interview?.currentStage?.toLowerCase() as InterviewStage | undefined
+      {
+        companyName: config.interview.companyName,
+        candidateName: candidate.name !== 'Unknown' ? candidate.name : undefined,
+        candidateEmail: candidate.email ?? undefined,
+        availablePositions: ['Software Engineer', 'Product Manager', 'Data Analyst'],
+      }
     );
 
     // Save AI response to memory
@@ -121,17 +121,22 @@ async function processMessage(message: ParsedWhatsAppMessage): Promise<void> {
 
     // Save outgoing message
     await messageRepository.createAssistantMessage(candidate.id, aiResponse.content, {
-      interviewId: interview?.id,
       whatsappMessageId: sentMessage.messages[0]?.id,
       tokensUsed: aiResponse.tokensUsed,
       aiModel: aiService.getModelName(),
       processingTimeMs: Date.now() - startTime,
     });
 
+    // Handle scheduling action if detected
+    if (aiResponse.action) {
+      await handleSchedulingAction(message.from, candidate.id, aiResponse.action);
+    }
+
     logger.info(
       {
         from: message.from,
         processingTime: Date.now() - startTime,
+        hasAction: !!aiResponse.action,
       },
       'Message processed successfully'
     );
@@ -151,35 +156,98 @@ async function processMessage(message: ParsedWhatsAppMessage): Promise<void> {
 }
 
 /**
- * Generate AI response for the message
+ * Handle scheduling action - create calendar event and send email
  */
-async function generateResponse(
-  userMessage: string,
-  history: ChatMessage[],
-  candidateName: string,
-  currentStage?: InterviewStage
-): Promise<{ content: string; tokensUsed: number }> {
-  // Build interview context
-  const context = {
-    candidateName,
-    positionTitle: 'Software Engineer', // TODO: Get from active interview
-    positionDescription: 'Building amazing software products',
-    positionRequirements: 'Experience with TypeScript, Node.js, and cloud services',
-    companyName: config.interview.companyName,
-    currentStage: currentStage ?? 'introduction',
-    questionsAsked: history.filter((m) => m.role === 'assistant').length,
-  };
+async function handleSchedulingAction(
+  phoneNumber: string,
+  candidateId: string,
+  action: ScheduleAction
+): Promise<void> {
+  try {
+    logger.info({ action }, 'Processing scheduling action');
 
-  const response = await aiService.generateInterviewResponse(
-    userMessage,
-    history,
-    context
-  );
+    // Parse date and time
+    const dateParts = action.date.split('-').map(Number);
+    const timeParts = action.time.split(':').map(Number);
+    const year = dateParts[0] ?? 2024;
+    const month = dateParts[1] ?? 1;
+    const day = dateParts[2] ?? 1;
+    const hour = timeParts[0] ?? 9;
+    const minute = timeParts[1] ?? 0;
+    const timezone = action.timezone ?? 'America/Mexico_City';
 
-  return {
-    content: response.content,
-    tokensUsed: response.usage.totalTokens,
-  };
+    // Create interview start time
+    const startTime = new Date(year, month - 1, day, hour, minute);
+
+    // Create calendar event
+    const calendarResult = await calendarService.scheduleInterview({
+      candidateId,
+      positionId: 'default',
+      startTime,
+      duration: 60, // 1 hour interview
+      timeZone: timezone,
+      attendeeEmails: [action.candidateEmail],
+      includeVideoConference: true,
+      notes: `Interview with ${action.candidateName} for ${action.positionTitle}`,
+    });
+
+    logger.info({ eventId: calendarResult.eventId }, 'Calendar event created');
+
+    // Format date for email
+    const formattedDate = startTime.toLocaleDateString('es-MX', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+    const formattedTime = startTime.toLocaleTimeString('es-MX', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+    // Send confirmation email
+    await emailService.sendTemplateEmail('interview_scheduled', {
+      candidateName: action.candidateName,
+      candidateEmail: action.candidateEmail,
+      positionTitle: action.positionTitle,
+      companyName: config.interview.companyName,
+      interviewDate: formattedDate,
+      interviewTime: formattedTime,
+      interviewLink: calendarResult.meetLink,
+    });
+
+    logger.info({ email: action.candidateEmail }, 'Confirmation email sent');
+
+    // Update candidate email if not set
+    await candidateRepository.update(candidateId, {
+      email: action.candidateEmail,
+      name: action.candidateName,
+    });
+
+    // Send confirmation via WhatsApp
+    const confirmationMessage = `✅ ¡Listo! Tu entrevista ha sido agendada.
+
+📅 ${formattedDate}
+🕐 ${formattedTime}
+💼 Posición: ${action.positionTitle}
+
+${calendarResult.meetLink ? `📹 Link de Google Meet: ${calendarResult.meetLink}` : ''}
+
+Te envié un correo de confirmación a ${action.candidateEmail} con todos los detalles.
+
+¡Nos vemos pronto! 🎉`;
+
+    await whatsAppService.sendTextMessage(phoneNumber, confirmationMessage);
+
+  } catch (error) {
+    logger.error({ error, action }, 'Failed to process scheduling action');
+
+    // Notify user of the error
+    await whatsAppService.sendTextMessage(
+      phoneNumber,
+      'Hubo un problema al agendar la entrevista. Por favor intenta de nuevo o contacta a nuestro equipo directamente.'
+    );
+  }
 }
 
 /**
