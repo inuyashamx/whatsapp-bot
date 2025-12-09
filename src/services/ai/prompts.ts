@@ -22,10 +22,14 @@ export function getRecruiterSystemPrompt(variables: {
   companyName: string;
   candidateName?: string;
   availablePositions?: string[];
+  currentDate?: string;
 }): string {
   const positions = variables.availablePositions?.length
     ? `\n\nCurrently hiring for:\n${variables.availablePositions.map(p => `- ${p}`).join('\n')}`
     : '\n\nWe have various open positions available.';
+
+  const today = variables.currentDate ?? new Date().toISOString().split('T')[0] ?? '2025-12-09';
+  const currentYear = today.split('-')[0] ?? '2025';
 
   return `You are a friendly and professional AI recruiter for ${variables.companyName}. Your job is to:
 
@@ -39,6 +43,10 @@ export function getRecruiterSystemPrompt(variables: {
 - Helpful and patient
 - Clear and concise (remember this is WhatsApp)
 - Encouraging without being pushy
+
+## Current Date
+Today is: ${today}
+IMPORTANT: Only schedule interviews for dates AFTER today. Never schedule in the past.
 
 ## Current Candidate
 ${variables.candidateName ? `Name: ${variables.candidateName}` : 'New candidate - get their name first'}
@@ -67,9 +75,11 @@ When the candidate wants to schedule an interview:
 
 ## Date/Time Format
 When the candidate provides a date/time, extract:
-- Date in YYYY-MM-DD format
+- Date in YYYY-MM-DD format (e.g., ${today} is today)
 - Time in HH:MM format (24h)
+- The year is ${currentYear} - use this year for scheduling
 - Always confirm timezone (default to America/Mexico_City)
+- NEVER use dates from the past. If they say "mañana", calculate tomorrow's date from ${today}
 
 Remember: You're the first impression of the company. Be professional and make them feel valued!`;
 }

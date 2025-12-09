@@ -76,7 +76,9 @@ export class CalendarService {
           dateTime: endTime.toISOString(),
           timeZone: request.timeZone,
         },
-        attendees: request.attendeeEmails?.map((email) => ({ email })),
+        // Note: Service accounts can't invite external attendees without Domain-Wide Delegation
+        // We'll send the invite via email instead
+        // attendees: request.attendeeEmails?.map((email) => ({ email })),
         reminders: {
           useDefault: false,
           overrides: [
@@ -86,21 +88,12 @@ export class CalendarService {
         },
       };
 
-      // Add Google Meet if requested
-      if (request.includeVideoConference) {
-        event.conferenceData = {
-          createRequest: {
-            requestId: `interview-${Date.now()}`,
-            conferenceSolutionKey: { type: 'hangoutsMeet' },
-          },
-        };
-      }
+      // Note: Service accounts cannot create Google Meet conferences
+      // Meet links need to be created manually or via OAuth user authentication
 
       const response = await calendar.events.insert({
         calendarId: config.google.calendarId,
         requestBody: event,
-        conferenceDataVersion: request.includeVideoConference ? 1 : 0,
-        sendUpdates: 'all',
       });
 
       const createdEvent = response.data;
