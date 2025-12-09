@@ -1,9 +1,10 @@
 /**
- * Gmail API Service
+ * Email Service using Nodemailer with Gmail SMTP
  * Handles email operations for interview communications
  */
 
-import { google, type gmail_v1 } from 'googleapis';
+import nodemailer from 'nodemailer';
+import type { Transporter } from 'nodemailer';
 import { config } from '../../config/index.js';
 import { logger } from '../../config/logger.js';
 import { ExternalServiceError } from '../../utils/errors.js';
@@ -15,43 +16,32 @@ import type {
 } from '../../types/email.js';
 
 export class EmailService {
-  private gmail: gmail_v1.Gmail | null = null;
+  private transporter: Transporter | null = null;
 
   /**
-   * Initialize Gmail API client
+   * Initialize Nodemailer transporter
    */
-  private async getGmailClient(): Promise<gmail_v1.Gmail> {
-    if (this.gmail) {
-      return this.gmail;
+  private getTransporter(): Transporter {
+    if (this.transporter) {
+      return this.transporter;
     }
 
     try {
-      let auth;
+      this.transporter = nodemailer.createTransport({
+        host: process.env['SMTP_HOST'] ?? 'smtp.gmail.com',
+        port: parseInt(process.env['SMTP_PORT'] ?? '587', 10),
+        secure: false,
+        auth: {
+          user: process.env['SMTP_USER'],
+          pass: process.env['SMTP_PASS'],
+        },
+      });
 
-      if (config.google.privateKey && config.google.serviceAccountEmail) {
-        auth = new google.auth.GoogleAuth({
-          credentials: {
-            client_email: config.google.serviceAccountEmail,
-            private_key: config.google.privateKey,
-          },
-          scopes: [
-            'https://www.googleapis.com/auth/gmail.send',
-            'https://www.googleapis.com/auth/gmail.compose',
-          ],
-        });
-      } else {
-        auth = new google.auth.OAuth2(
-          config.google.clientId,
-          config.google.clientSecret,
-          config.google.redirectUri
-        );
-      }
-
-      this.gmail = google.gmail({ version: 'v1', auth });
-      return this.gmail;
+      logger.info('Email transporter initialized');
+      return this.transporter;
     } catch (error) {
-      logger.error({ error }, 'Failed to initialize Gmail client');
-      throw new ExternalServiceError('Gmail', 'Failed to initialize');
+      logger.error({ error }, 'Failed to initialize email transporter');
+      throw new ExternalServiceError('Email', 'Failed to initialize');
     }
   }
 
@@ -60,110 +50,40 @@ export class EmailService {
    */
   async sendEmail(request: SendEmailRequest): Promise<SendEmailResponse> {
     try {
-      const gmail = await this.getGmailClient();
+      const transporter = this.getTransporter();
 
-      const toAddresses = Array.isArray(request.to) ? request.to : [request.to];
-      const message = this.createMimeMessage({
+      const toAddresses = Array.isArray(request.to) ? request.to.join(', ') : request.to;
+      const fromAddress = `"${config.email.fromName}" <${config.email.fromAddress}>`;
+
+      const mailOptions = {
+        from: fromAddress,
         to: toAddresses,
-        cc: request.cc,
-        bcc: request.bcc,
+        cc: request.cc?.join(', '),
+        bcc: request.bcc?.join(', '),
         subject: request.subject,
-        body: request.body,
-        htmlBody: request.htmlBody,
-        replyTo: request.replyToMessageId,
-      });
+        text: request.body,
+        html: request.htmlBody,
+      };
 
-      const encodedMessage = Buffer.from(message)
-        .toString('base64')
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/, '');
-
-      const response = await gmail.users.messages.send({
-        userId: 'me',
-        requestBody: {
-          raw: encodedMessage,
-          threadId: request.replyToMessageId,
-        },
-      });
+      const info = await transporter.sendMail(mailOptions);
 
       logger.info(
         {
-          messageId: response.data.id,
-          to: toAddresses[0],
+          messageId: info.messageId,
+          to: toAddresses,
         },
         'Email sent successfully'
       );
 
       return {
-        messageId: response.data.id ?? '',
-        threadId: response.data.threadId ?? '',
-        labelIds: response.data.labelIds ?? [],
+        messageId: info.messageId ?? '',
+        threadId: '',
+        labelIds: [],
       };
     } catch (error) {
       logger.error({ error }, 'Failed to send email');
-      throw new ExternalServiceError('Gmail', 'Failed to send email');
+      throw new ExternalServiceError('Email', 'Failed to send email');
     }
-  }
-
-  /**
-   * Create a MIME message
-   */
-  private createMimeMessage(options: {
-    to: string[];
-    cc?: string[];
-    bcc?: string[];
-    subject: string;
-    body: string;
-    htmlBody?: string;
-    replyTo?: string;
-  }): string {
-    const boundary = `boundary_${Date.now()}`;
-    const fromAddress = `${config.email.fromName} <${config.email.fromAddress}>`;
-
-    let message = [
-      `From: ${fromAddress}`,
-      `To: ${options.to.join(', ')}`,
-    ];
-
-    if (options.cc?.length) {
-      message.push(`Cc: ${options.cc.join(', ')}`);
-    }
-
-    if (options.bcc?.length) {
-      message.push(`Bcc: ${options.bcc.join(', ')}`);
-    }
-
-    message = message.concat([
-      `Subject: ${options.subject}`,
-      'MIME-Version: 1.0',
-    ]);
-
-    if (options.htmlBody) {
-      message = message.concat([
-        `Content-Type: multipart/alternative; boundary="${boundary}"`,
-        '',
-        `--${boundary}`,
-        'Content-Type: text/plain; charset="UTF-8"',
-        '',
-        options.body,
-        '',
-        `--${boundary}`,
-        'Content-Type: text/html; charset="UTF-8"',
-        '',
-        options.htmlBody,
-        '',
-        `--${boundary}--`,
-      ]);
-    } else {
-      message = message.concat([
-        'Content-Type: text/plain; charset="UTF-8"',
-        '',
-        options.body,
-      ]);
-    }
-
-    return message.join('\r\n');
   }
 
   /**
